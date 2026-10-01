@@ -163,14 +163,38 @@ jobs:
             return null;
           };
           R.hasTitle=function(){return R.titleEl()?'1':'0';};
+          R.categoryOpened=false;
           R.category=function(){
             var ID='15'; // Rumble's real numeric ID for "Entertainment"
             var hp=document.querySelector('input[name=category_primary]');
             if(!hp) return 'none';
-            if(hp.value && hp.value!=='0' && hp.value!=='') return 'ok';
+            if(hp.value===ID) return 'ok';
+
+            // 1) try clicking the real menu item wherever it currently is on screen
+            var cands=document.querySelectorAll('li,div,span,a,[role=option],[role=listitem],button,label,td');
+            for(var i=0;i<cands.length;i++){
+              var e=cands[i];
+              if(!R.vis(e)||R.inNav(e))continue;
+              var t=R.txt(e);
+              if(t.length<40 && /^entertainment$/i.test(t)){
+                e.click();
+                if(hp.value===ID) return 'ok';
+              }
+            }
+
+            // 2) make sure the dropdown is open so the real item can appear on a later tick
+            var box=document.querySelector('input[name="primary-category"]');
+            if(box && R.vis(box) && !R.categoryOpened){
+              R.categoryOpened=true;
+              box.focus();
+              box.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));
+              box.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
+              box.click();
+            }
+
+            // 3) also force the hidden field directly - harmless safety net even if Rumble's JS later overwrites it
             try{
               R.setVal(hp, ID);
-              var box=document.querySelector('input[name="primary-category"]');
               if(box) R.setVal(box, 'Entertainment');
             }catch(e){}
             return (hp.value===ID) ? 'ok' : 'none';
@@ -269,10 +293,27 @@ jobs:
             return '0';
           };
           R.stage2Clicked=false;
+          R.licensePicked=false;
+          R.pickLicense=function(){
+            if(R.licensePicked) return false;
+            var els=document.querySelectorAll('div,label,li,span,button,[role=button],[role=radio]');
+            for(var i=0;i<els.length;i++){
+              var e=els[i];
+              if(!R.vis(e)||R.inNav(e))continue;
+              var t=R.txt(e);
+              if(t.length<80 && /^personal use\b/i.test(t)){
+                e.click();
+                R.licensePicked=true;
+                return true; // just clicked - let the page settle before trying to submit
+              }
+            }
+            return false;
+          };
           R.confirm=function(){
+            var justPickedLicense=R.pickLicense(); // choose "Personal Use" licensing if that page is showing
             R.agree(); // tick any newly-shown rights/terms checkboxes on this second stage
             var clicked=false;
-            if(!R.stage2Clicked){
+            if(!R.stage2Clicked && !justPickedLicense){
               var b=R.submitBtn();
               if(b){
                 var label=R.txt(b).toLowerCase();
@@ -280,7 +321,7 @@ jobs:
                   b.click();
                   R.stage2Clicked=true;
                   clicked=true;
-                }
+                                  }
               }
             }
             return JSON.stringify({
@@ -308,7 +349,7 @@ jobs:
                 var lb=fi.id?document.querySelector('label[for="'+fi.id+'"]'):null;
                 t=(lb&&R.vis(lb))?lb:(fi.closest('label')||(R.vis(fi)?fi:fi.parentElement));
               }
-                          }
+            }
             if(!t)return '0';
             t.scrollIntoView({block:'center'});
             var r=t.getBoundingClientRect();
@@ -618,7 +659,7 @@ jobs:
                   } catch (e: Exception) { }
                   if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                       requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIF)
-                                        }
+                  }
                   try {
                       val pmc = getSystemService(Context.POWER_SERVICE) as PowerManager
                       if (!pmc.isIgnoringBatteryOptimizations(packageName)) {
