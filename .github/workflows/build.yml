@@ -348,7 +348,7 @@ jobs:
             }
             return false;
           };
-          R.s2Btn=function(){
+                    R.s2Btn=function(){
             var q=document.querySelectorAll('input[name=submitForm2],button[name=submitForm2],#submitForm2');
             for(var i=0;i<q.length;i++){ if(R.vis(q[i]))return q[i]; }
             var c=document.querySelectorAll('button,input[type=button],input[type=submit],[role=button]');
@@ -438,7 +438,7 @@ jobs:
               data class Vid(val id: String, val name: String, val uri: Uri)
 
               private lateinit var wv: WebView
-                            private lateinit var root: LinearLayout
+              private lateinit var root: LinearLayout
               private lateinit var lockLayer: FrameLayout
               private lateinit var lockLabel: TextView
               private lateinit var unlockBtn: Button
@@ -698,7 +698,7 @@ jobs:
                           }
                           MotionEvent.ACTION_MOVE -> {
                               val dx = ev.rawX - downX
-                              val dy = ev.rawY - downY
+                                                            val dy = ev.rawY - downY
                               if (!dragged && (Math.abs(dx) > dp(12) || Math.abs(dy) > dp(12))) dragged = true
                               if (dragged) {
                                   lp.x = startX + dx.toInt()
@@ -847,7 +847,39 @@ jobs:
                   var res = 0
                   var i = 0
                   while (res == 0 && i < minOf(x.size, y.size)) {
-                                        failed.clear()
+                      val p = x[i]
+                      val q = y[i]
+                      res = if (p[0].isDigit() && q[0].isDigit()) p.toBigInteger().compareTo(q.toBigInteger()) else p.compareTo(q)
+                      i++
+                  }
+                  if (res != 0) res else x.size - y.size
+              }
+
+              private fun loadVideos(tree: Uri) {
+                  val treeId = DocumentsContract.getTreeDocumentId(tree)
+                  val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, treeId)
+                  val list = ArrayList<Vid>()
+                  val ext = Regex(".*\\.(mp4|mov|mkv|avi|webm|m4v|3gp|flv|wmv|mpg|mpeg)")
+                  val cur = contentResolver.query(
+                      children,
+                      arrayOf(
+                          DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                          DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                          DocumentsContract.Document.COLUMN_MIME_TYPE
+                      ), null, null, null
+                  )
+                  cur?.use {
+                      while (it.moveToNext()) {
+                          val id = it.getString(0)
+                          val name = it.getString(1) ?: continue
+                          val mime = it.getString(2) ?: ""
+                          if (mime.startsWith("video/") || name.lowercase().matches(ext)) {
+                              list.add(Vid(id, name, DocumentsContract.buildDocumentUriUsingTree(tree, id)))
+                          }
+                      }
+                  }
+                  queue = list.sortedWith(natCmp)
+                  failed.clear()
                   log("Folder loaded: ${queue.size} video(s).")
               }
 
@@ -1016,7 +1048,7 @@ jobs:
 
               private fun debugDump() {
                   runJs("R.dump()") { r ->
-                      val txt = try { JSONObject(r ?: "{}").toString(2) } catch (e: Exception) { r ?: "(no data)" }
+                                        val txt = try { JSONObject(r ?: "{}").toString(2) } catch (e: Exception) { r ?: "(no data)" }
                       log("--- DEBUG ---\n$txt\n--- copied to clipboard ---")
                       val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                       cm.setPrimaryClip(ClipData.newPlainText("rumble-debug", txt))
@@ -1240,4 +1272,51 @@ jobs:
               override fun onCreate() {
                   super.onCreate()
                   val chId = "rbu_channel"
-           
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      val nm = getSystemService(NotificationManager::class.java)
+                      val ch = NotificationChannel(chId, "Rumble Uploader", NotificationManager.IMPORTANCE_LOW)
+                      nm.createNotificationChannel(ch)
+                  }
+                  val notif: Notification =
+                      (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(this, chId) else Notification.Builder(this))
+                          .setContentTitle("Rumble Uploader")
+                          .setContentText("Uploading videos in the background…")
+                          .setSmallIcon(android.R.drawable.stat_sys_upload)
+                          .setOngoing(true)
+                          .build()
+                  try {
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                          startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                      } else {
+                          startForeground(1, notif)
+                      }
+                  } catch (e: Exception) { }
+                  try {
+                      val pm = getSystemService(POWER_SERVICE) as PowerManager
+                      wake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "rbu:service")
+                      wake?.acquire(12 * 60 * 60 * 1000L)
+                  } catch (e: Exception) { }
+              }
+
+              override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+
+              override fun onDestroy() {
+                  try { if (wake?.isHeld == true) wake?.release() } catch (e: Exception) { }
+                  super.onDestroy()
+              }
+          }
+          RBU_EOF
+      - name: Build APK
+        run: gradle assembleDebug --no-daemon
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RumbleUploader-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest APK
+          files: app/build/outputs/apk/debug/app-debug.apk
+
