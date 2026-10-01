@@ -221,7 +221,6 @@ jobs:
             return JSON.stringify({x:r.left+r.width/2,y:r.top+r.height/2,iw:window.innerWidth});
           };
           R.catSynth=function(){
-            if(R.category()==='ok')return 'ok';
             var e=R.catOptEl();
             if(!e)return 'noopt';
             R.synth(e);
@@ -369,10 +368,10 @@ jobs:
             var r=b.getBoundingClientRect();
             if(r.width>1&&r.height>1){o.x=r.left+r.width/2;o.y=r.top+r.height/2;o.iw=window.innerWidth;}
             return JSON.stringify(o);
-          };
+                      };
           R.pickRect=function(){
             var re=/(select|choose|browse|pick).{0,20}(video|file)|drag.{0,20}drop|drop.{0,20}here|upload (a )?(video|file)/i;
-                        var els=document.querySelectorAll('button,label,a,div,span,[role=button]');
+            var els=document.querySelectorAll('button,label,a,div,span,[role=button]');
             var best=null;
             for(var i=0;i<els.length;i++){
               var e=els[i];
@@ -746,7 +745,7 @@ jobs:
                   releaseWake()
                   try { stopService(Intent(this, RbuService::class.java)) } catch (e: Exception) { }
                   log(msg)
-                                    updateStatus()
+                  updateStatus()
               }
 
               private fun releaseWake() {
@@ -823,12 +822,9 @@ jobs:
                                               h.postDelayed({
                                                   runJs("R.catSynth()") { _ ->
                                                       h.postDelayed({
-                                                          runJs("R.category()") { c ->
-                                                              busy = false
-                                                              if (c == "ok") log("  category: Entertainment selected")
-                                                              else log("  category not set (try " + round + " of 3)")
-                                                          }
-                                                      }, 1500)
+                                                          busy = false
+                                                          log("  category: Entertainment (selected once)")
+                                                      }, 1200)
                                                   }
                                               }, 1500)
                                           }
@@ -956,22 +952,15 @@ jobs:
                                           lastPctLog = t
                                           log("  uploading " + o.optString("pct"))
                                       }
-                                      if (cat == "ok" && !catLogged) { catLogged = true; log("  category: Entertainment (confirmed)") }
-                                      if (cat != "ok" && catRounds < 3 && t - lastCatTap > 6000) {
+                                      if (catRounds == 0) {
                                           needCatTap = true
-                                          lastCatTap = t
-                                      }
-                                      if (cat != "ok" && catRounds >= 3 && !catWaitLogged && t - lastCatTap > 6000) {
-                                          catWaitLogged = true
-                                          log("  Could not auto-select the category. Tap 'Entertainment' yourself in the page above - I will continue by myself.")
-                                          debugDump()
                                       }
                                       if (!up && ready) stable++ else stable = 0
                                       if (stable >= 4 && t - since > 15000) {
                                           if (unl != "ok") {
                                               stopRun("Ready to submit, but I could not confirm 'Unlisted' is selected, so I did NOT submit. Tap Debug and send me the text.")
-                                          } else if (cat != "ok") {
-                                              // waiting for category (auto tries finished or manual pick)
+                                          } else if (catRounds == 0) {
+                                              // category step has not run yet - let it run first
                                           } else {
                                               state = S.SUBMITTING
                                           }
