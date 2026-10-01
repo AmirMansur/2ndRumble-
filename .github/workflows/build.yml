@@ -307,10 +307,13 @@ jobs:
             o.err=er?er[0]:'';
             return JSON.stringify(o);
           };
-          R.clickSubmit=function(){
+          R.submitRect=function(){
             var b=R.submitBtn();
-            if(b&&!b.disabled){b.click();return '1';}
-            return '0';
+            if(!b||b.disabled||b.getAttribute('aria-disabled')==='true'||b.classList.contains('disabled'))return '0';
+            b.scrollIntoView({block:'center'});
+            var r=b.getBoundingClientRect();
+            if(r.width<2||r.height<2)return '0';
+            return JSON.stringify({x:r.left+r.width/2,y:r.top+r.height/2,iw:window.innerWidth,txt:R.txt(b).slice(0,20)});
           };
           R.stage2Clicked=false;
           R.licensePicked=false;
@@ -333,26 +336,31 @@ jobs:
             }
             return false;
           };
-          R.confirm=function(){
-            var justPickedLicense=R.pickLicense(); // choose "Personal Use" licensing if that page is showing
-            R.agree(); // tick any newly-shown rights/terms checkboxes on this second stage
-            var clicked=false;
-            if(!R.stage2Clicked && !justPickedLicense){
-              var b=R.submitBtn();
-              if(b){
-                              var label=R.txt(b).toLowerCase();
-                if(label!=='back' && !b.disabled && !b.classList.contains('disabled')){
-                  b.click();
-                  R.stage2Clicked=true;
-                  clicked=true;
-                }
-              }
+          R.s2Btn=function(){
+            var q=document.querySelectorAll('input[name=submitForm2],button[name=submitForm2],#submitForm2');
+            for(var i=0;i<q.length;i++){ if(R.vis(q[i]))return q[i]; }
+            var c=document.querySelectorAll('button,input[type=button],input[type=submit],[role=button]');
+            for(var k=0;k<c.length;k++){
+              var e=c[k];
+              if(!R.vis(e)||R.inNav(e))continue;
+              if(/^submit$/i.test(R.txt(e)))return e;
             }
-            return JSON.stringify({
-              gone:!R.titleEl(),
-              ok:/successfully (uploaded|published)|has been (uploaded|published)|upload complete|is being processed|processing your video/i.test(document.body.innerText||''),
-              clicked:clicked
-            });
+            return null;
+          };
+          R.s2=function(){
+            var o={vis:false,title:!!R.titleEl(),lic:false,disabled:false};
+            var txt=document.body.innerText||'';
+            o.ok=/successfully (uploaded|published)|has been (uploaded|published)|upload complete|is being processed|processing your video/i.test(txt);
+            var b=R.s2Btn();
+            if(!b)return JSON.stringify(o);
+            o.vis=true;
+            o.lic=R.pickLicense();
+                        R.agree();
+            o.disabled=!!(b.disabled||b.getAttribute('aria-disabled')==='true'||b.classList.contains('disabled'));
+            b.scrollIntoView({block:'center'});
+            var r=b.getBoundingClientRect();
+            if(r.width>1&&r.height>1){o.x=r.left+r.width/2;o.y=r.top+r.height/2;o.iw=window.innerWidth;}
+            return JSON.stringify(o);
           };
           R.pickRect=function(){
             var re=/(select|choose|browse|pick).{0,20}(video|file)|drag.{0,20}drop|drop.{0,20}here|upload (a )?(video|file)/i;
@@ -438,6 +446,11 @@ jobs:
               private var catLogged = false
               private var stage2Logged = false
               private var lastCatTap = 0L
+              private var s1Taps = 0
+              private var s2Taps = 0
+              private var s2First = 0L
+              private var lastS2Tap = 0L
+              private var disLogged = false
               private var pageLoaded = false
               private var chooserServed = false
               private var pendingUri: Uri? = null
@@ -699,7 +712,7 @@ jobs:
                   }
                   try {
                       val pmc = getSystemService(Context.POWER_SERVICE) as PowerManager
-                      if (!pmc.isIgnoringBatteryOptimizations(packageName)) {
+                                            if (!pmc.isIgnoringBatteryOptimizations(packageName)) {
                           val i = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
                           i.data = Uri.parse("package:$packageName")
                           startActivity(i)
@@ -808,6 +821,11 @@ jobs:
                           catLogged = false
                           stage2Logged = false
                           lastCatTap = 0
+                          s1Taps = 0
+                          s2Taps = 0
+                          s2First = 0
+                          lastS2Tap = 0
+                          disLogged = false
                           wv.loadUrl(UPLOAD_URL)
                           state = S.LOADING
                           since = now
@@ -921,13 +939,22 @@ jobs:
                       }
                       S.SUBMITTING -> {
                           busy = true
-                          runJs("R.clickSubmit()") { r ->
+                          runJs("R.submitRect()") { r ->
                               busy = false
-                              if (r == "1") {
-                                  urlAtSubmit = wv.url
-                                  state = S.CONFIRMING
-                                  since = SystemClock.elapsedRealtime()
-                                  log("  submitted")
+                              if (r != null && r != "0") {
+                                  try {
+                                      val o = JSONObject(r)
+                                      val sc = wv.width.toFloat() / o.getDouble("iw").toFloat()
+                                      tap(o.getDouble("x").toFloat() * sc, o.getDouble("y").toFloat() * sc)
+                                      s1Taps++
+                                      urlAtSubmit = wv.url
+                                      state = S.CONFIRMING
+                                      since = SystemClock.elapsedRealtime()
+                                      log("  submitted (real tap " + s1Taps + ")")
+                                  } catch (e: Exception) {
+                                      stable = 0
+                                      state = S.UPLOADING
+                                  }
                               } else {
                                   stable = 0
                                   state = S.UPLOADING
@@ -936,18 +963,36 @@ jobs:
                       }
                       S.CONFIRMING -> {
                           busy = true
-                          runJs("R.confirm()") { r ->
+                          runJs("R.s2()") { r ->
                               busy = false
                               val t = SystemClock.elapsedRealtime()
                               val o = try { JSONObject(r ?: "{}") } catch (e: Exception) { JSONObject() }
-                              val changed = (wv.url ?: "") != (urlAtSubmit ?: "")
-                              if (o.optBoolean("clicked") && !stage2Logged) {
-                                  stage2Logged = true
-                                  log("  confirmed rights/terms and submitted final step")
-                              }
-                              if (o.optBoolean("gone") || o.optBoolean("ok") || changed) {
+                              val curUrl = wv.url ?: ""
+                              val left = !curUrl.contains("upload", true)
+                              val changed = curUrl != (urlAtSubmit ?: "")
+                              val s2vis = o.optBoolean("vis")
+                              val titleVis = o.optBoolean("title")
+                              if (s2vis && s2First == 0L) s2First = t
+                              if (left || (s2Taps > 0 && (changed || o.optBoolean("ok")))) {
                                   markDone("")
-                              } else if (t - since > 90000) {
+                              } else if (s2Taps > 0 && !s2vis && !titleVis) {
+                                  markDone("")
+                              } else if (s2vis) {
+                                  if (!stage2Logged) { stage2Logged = true; log("  final page: Personal Use + rights/terms") }
+                                  if (o.optBoolean("disabled")) {
+                                      if (!disLogged) { disLogged = true; log("  final Submit is greyed out, waiting...") }
+                                  } else if (s2Taps >= 6) {
+                                      fail("Final Submit did not respond to 6 taps. Tap Debug and send me the text")
+                                  } else if (t - s2First > 3000 && t - lastS2Tap > 5000 && o.has("x")) {
+                                      val sc = wv.width.toFloat() / o.getDouble("iw").toFloat()
+                                      tap(o.getDouble("x").toFloat() * sc, o.getDouble("y").toFloat() * sc)
+                                      s2Taps++
+                                      lastS2Tap = t
+                                      log("  tapped final Submit (" + s2Taps + ")")
+                                  }
+                              } else if (titleVis && t - since > 8000 && s1Taps < 4) {
+                                  state = S.SUBMITTING
+                              } else if (t - since > 120000) {
                                   markDone(" (could not confirm - please check Rumble)")
                               }
                           }
