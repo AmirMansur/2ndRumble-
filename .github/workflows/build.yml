@@ -163,61 +163,49 @@ jobs:
             return null;
           };
           R.hasTitle=function(){return R.titleEl()?'1':'0';};
-          R.categoryOpened=false;
-          R.categoryNeedTap=function(){
-            var hp=document.querySelector('input[name=category_primary]');
-            if(!hp || hp.value==='15') return '0';
-            var cands=document.querySelectorAll('li,div,span,a,[role=option],[role=listitem],button,label,td');
-            for(var i=0;i<cands.length;i++){
-              var e=cands[i];
-              if(!R.vis(e)||R.inNav(e))continue;
-              var t=R.txt(e);
-              if(t.length<40 && /^entertainment$/i.test(t)){
-                var r=e.getBoundingClientRect();
-                if(r.width>1&&r.height>1) return JSON.stringify({x:r.left+r.width/2,y:r.top+r.height/2,iw:window.innerWidth});
-              }
-            }
-            var box=document.querySelector('input[name="primary-category"]');
-            if(box && R.vis(box)){
-              var r2=box.getBoundingClientRect();
-              if(r2.width>1&&r2.height>1) return JSON.stringify({x:r2.left+r2.width/2,y:r2.top+r2.height/2,iw:window.innerWidth});
-            }
-            return '0';
-          };
+          R.catBox=function(){return document.querySelector('input[name="primary-category"]');};
           R.category=function(){
-            var ID='15'; // Rumble's real numeric ID for "Entertainment"
             var hp=document.querySelector('input[name=category_primary]');
-            if(!hp) return 'none';
-            if(hp.value===ID) return 'ok';
-
-            // 1) try clicking the real menu item wherever it currently is on screen
-            var cands=document.querySelectorAll('li,div,span,a,[role=option],[role=listitem],button,label,td');
+            var box=R.catBox();
+            if(!hp)return 'none';
+            if(hp.value==='15'&&box&&/entertainment/i.test(box.value))return 'ok';
+            return 'none';
+          };
+          R.findOpt=function(){
+            var cands=document.querySelectorAll('li,div,span,a,p,td,[role=option],[role=listitem],button,label');
+            var best=null;
             for(var i=0;i<cands.length;i++){
               var e=cands[i];
               if(!R.vis(e)||R.inNav(e))continue;
-              var t=R.txt(e);
-              if(t.length<40 && /^entertainment$/i.test(t)){
-                e.click();
-                if(hp.value===ID) return 'ok';
+              if(/^entertainment$/i.test(R.txt(e))){
+                if(!best||e.innerHTML.length<best.innerHTML.length)best=e;
               }
             }
-
-            // 2) make sure the dropdown is open so the real item can appear on a later tick
-            var box=document.querySelector('input[name="primary-category"]');
-            if(box && R.vis(box) && !R.categoryOpened){
-              R.categoryOpened=true;
-              box.focus();
-              box.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));
-              box.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
-              box.click();
+            return best;
+          };
+          R.rectOf=function(e,kind){
+            e.scrollIntoView({block:'center'});
+            var r=e.getBoundingClientRect();
+            if(r.width<2||r.height<2)return '0';
+            return JSON.stringify({x:r.left+r.width/2,y:r.top+r.height/2,iw:window.innerWidth,kind:kind});
+          };
+          R.synth=function(e){
+            var ms=['pointerdown','mousedown','pointerup','mouseup','click'];
+            for(var i=0;i<ms.length;i++){
+              try{e.dispatchEvent(new MouseEvent(ms[i],{bubbles:true,cancelable:true,view:window}));}catch(x){}
             }
-
-            // 3) also force the hidden field directly - harmless safety net even if Rumble's JS later overwrites it
-            try{
-              R.setVal(hp, ID);
-              if(box) R.setVal(box, 'Entertainment');
-            }catch(e){}
-            return (hp.value===ID) ? 'ok' : 'none';
+            try{if(window.jQuery){window.jQuery(e).trigger('mousedown').trigger('mouseup').trigger('click');}}catch(x){}
+          };
+          R.catStep=function(n){
+            if(R.category()==='ok')return 'ok';
+            var opt=R.findOpt();
+            if(opt){
+              if(n%3===2){R.synth(opt);return '0';}
+              return R.rectOf(opt,'opt');
+            }
+            var box=R.catBox();
+            if(box&&R.vis(box))return R.rectOf(box,'box');
+            return '0';
           };
           R.agree=function(){
             var n=0;
@@ -355,7 +343,7 @@ jobs:
             if(!b)return JSON.stringify(o);
             o.vis=true;
             o.lic=R.pickLicense();
-                        R.agree();
+            R.agree();
             o.disabled=!!(b.disabled||b.getAttribute('aria-disabled')==='true'||b.classList.contains('disabled'));
             b.scrollIntoView({block:'center'});
             var r=b.getBoundingClientRect();
@@ -368,7 +356,7 @@ jobs:
             var best=null;
             for(var i=0;i<els.length;i++){
               var e=els[i];
-              if(!R.vis(e)||R.inNav(e))continue;
+                            if(!R.vis(e)||R.inNav(e))continue;
               var tx=R.txt(e);
               if(tx.length>0&&tx.length<70&&re.test(tx)){
                 if(!best||tx.length<R.txt(best).length)best=e;
@@ -402,21 +390,21 @@ jobs:
             o.fields=list('input,textarea,select',false,function(e){return [e.tagName,e.type,e.name,e.id,e.placeholder,(e.value+'').slice(0,20),R.vis(e)?'vis':'hid',e.checked?'chk':''].join('|');});
             o.buttons=list('button,[role=button],input[type=submit],label',true,function(e){return R.txt(e).slice(0,40);});
             o.text=(document.body.innerText||'').replace(/\s+/g,' ').slice(0,700);
+            try{
+              var all=document.querySelectorAll('li,div,span,a,label,td,p');
+              var f=null;
+              for(var q=0;q<all.length;q++){
+                if(/^entertainment$/i.test((all[q].textContent||'').trim())){
+                  if(!f||all[q].outerHTML.length<f.outerHTML.length)f=all[q];
+                }
+              }
+              o.catdbg=f?{vis:R.vis(f),html:f.outerHTML.slice(0,200),parent:(f.parentElement?f.parentElement.outerHTML.slice(0,200):'')}:'no element with exact text Entertainment in DOM';
+              var bx=R.catBox();
+              o.catbox=bx?bx.outerHTML.slice(0,250):'no box';
+            }catch(e){o.catdbg='err '+e;}
             return JSON.stringify(o);
           };
           window.__rbu=R;
-          // keep forcing the real category onto the page every 100ms, since Rumble's
-          // own JS resets the hidden field back to 0 if we only set it occasionally
-          setInterval(function(){
-            try{
-              var hp=document.querySelector('input[name=category_primary]');
-              if(hp && hp.value!=='15'){
-                R.setVal(hp,'15');
-                var box=document.querySelector('input[name="primary-category"]');
-                if(box && box.value!=='Entertainment') R.setVal(box,'Entertainment');
-              }
-            }catch(e){}
-          },100);
           })();
           var R=window.__rbu;
           """
@@ -447,6 +435,7 @@ jobs:
               private var stage2Logged = false
               private var lastCatTap = 0L
               private var s1Taps = 0
+              private var catTries = 0
               private var s2Taps = 0
               private var s2First = 0L
               private var lastS2Tap = 0L
@@ -559,7 +548,7 @@ jobs:
                           return true
                       }
                   }
-                  root.addView(wv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 3f))
+                  root.addView(wv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 4f))
 
                   logView = TextView(this)
                   logView.setTextColor(Color.parseColor("#9fe870"))
@@ -568,7 +557,7 @@ jobs:
                   logView.setTextIsSelectable(true)
                   logScroll = ScrollView(this)
                   logScroll.addView(logView)
-                  root.addView(logScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 2f))
+                  root.addView(logScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.2f))
 
                   setContentView(root)
                   wv.loadUrl(UPLOAD_URL)
@@ -712,7 +701,7 @@ jobs:
                   }
                   try {
                       val pmc = getSystemService(Context.POWER_SERVICE) as PowerManager
-                                            if (!pmc.isIgnoringBatteryOptimizations(packageName)) {
+                      if (!pmc.isIgnoringBatteryOptimizations(packageName)) {
                           val i = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
                           i.data = Uri.parse("package:$packageName")
                           startActivity(i)
@@ -726,7 +715,7 @@ jobs:
                       val svc = Intent(this, RbuService::class.java)
                       if (Build.VERSION.SDK_INT >= 26) startForegroundService(svc) else startService(svc)
                   } catch (e: Exception) { }
-                  updateStatus()
+                                    updateStatus()
                   h.post(ticker)
               }
 
@@ -789,6 +778,24 @@ jobs:
                   }, 90)
               }
 
+              private fun catAttempt(follow: Boolean) {
+                  runJs("R.catStep(" + catTries + ")") { r ->
+                      busy = false
+                      if (r != null && r != "0" && r != "ok") {
+                          try {
+                              val po = JSONObject(r)
+                              val sc = wv.width.toFloat() / po.getDouble("iw").toFloat()
+                              tap(po.getDouble("x").toFloat() * sc, po.getDouble("y").toFloat() * sc)
+                              if (follow && po.optString("kind") == "box") {
+                                  h.postDelayed({
+                                      if (running && !busy) { busy = true; catAttempt(false) }
+                                  }, 900)
+                              }
+                          } catch (e: Exception) { }
+                      }
+                  }
+              }
+
               private fun debugDump() {
                   runJs("R.dump()") { r ->
                       val txt = try { JSONObject(r ?: "{}").toString(2) } catch (e: Exception) { r ?: "(no data)" }
@@ -822,6 +829,7 @@ jobs:
                           stage2Logged = false
                           lastCatTap = 0
                           s1Taps = 0
+                          catTries = 0
                           s2Taps = 0
                           s2First = 0
                           lastS2Tap = 0
@@ -912,8 +920,12 @@ jobs:
                                       if (stable >= 4 && t - since > 15000) {
                                           if (unl != "ok") {
                                               stopRun("Ready to submit, but I could not confirm 'Unlisted' is selected, so I did NOT submit. Tap Debug and send me the text.")
+                                          } else if (cat != "ok") {
+                                              if (catTries >= 14) {
+                                                  stopRun("Could not select the category after 14 tries, so I did NOT submit. Debug info copied - send it to me.")
+                                                  debugDump()
+                                              }
                                           } else {
-                                              if (cat != "ok" && !catLogged) { catLogged = true; log("  category: Entertainment (typed, not confirmed - proceeding anyway)") }
                                               state = S.SUBMITTING
                                           }
                                       } else if (t - since > 6 * 3600 * 1000L) {
@@ -922,16 +934,8 @@ jobs:
                                   }
                               }
                               if (needCatTap && state == S.UPLOADING) {
-                                  runJs("R.categoryNeedTap()") { r2 ->
-                                      busy = false
-                                      if (r2 != null && r2 != "0") {
-                                          try {
-                                              val po = JSONObject(r2)
-                                              val sc = wv.width.toFloat() / po.getDouble("iw").toFloat()
-                                              tap(po.getDouble("x").toFloat() * sc, po.getDouble("y").toFloat() * sc)
-                                          } catch (e: Exception) { }
-                                      }
-                                  }
+                                  catTries++
+                                  catAttempt(true)
                               } else {
                                   busy = false
                               }
