@@ -78,6 +78,7 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
               <uses-permission android:name="android.permission.WAKE_LOCK" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
@@ -135,6 +136,10 @@ jobs:
           import android.widget.LinearLayout
           import android.widget.ScrollView
           import android.widget.TextView
+          import android.graphics.PixelFormat
+          import android.view.Gravity
+          import android.view.View
+          import android.widget.FrameLayout
           import org.json.JSONObject
           import org.json.JSONTokener
 
@@ -368,7 +373,7 @@ jobs:
             var r=b.getBoundingClientRect();
             if(r.width>1&&r.height>1){o.x=r.left+r.width/2;o.y=r.top+r.height/2;o.iw=window.innerWidth;}
             return JSON.stringify(o);
-                      };
+          };
           R.pickRect=function(){
             var re=/(select|choose|browse|pick).{0,20}(video|file)|drag.{0,20}drop|drop.{0,20}here|upload (a )?(video|file)/i;
             var els=document.querySelectorAll('button,label,a,div,span,[role=button]');
@@ -433,6 +438,17 @@ jobs:
               data class Vid(val id: String, val name: String, val uri: Uri)
 
               private lateinit var wv: WebView
+                            private lateinit var root: LinearLayout
+              private lateinit var lockLayer: FrameLayout
+              private lateinit var lockLabel: TextView
+              private lateinit var unlockBtn: Button
+              private var floatBtn: Button? = null
+              private var locked = false
+              private var floating = false
+              private var floatBox: FrameLayout? = null
+              private var placeholder: TextView? = null
+              private var floatTaps = 0
+              private var lastFloatTap = 0L
               private lateinit var logView: TextView
               private lateinit var logScroll: ScrollView
               private lateinit var statusView: TextView
@@ -473,7 +489,7 @@ jobs:
                   window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                   prefs = getSharedPreferences("rbu", Context.MODE_PRIVATE)
 
-                  val root = LinearLayout(this)
+                  root = LinearLayout(this)
                   root.orientation = LinearLayout.VERTICAL
                   root.setBackgroundColor(Color.parseColor("#111111"))
 
@@ -503,6 +519,12 @@ jobs:
                       btn("Skip video") { skipCurrent() },
                       btn("Debug") { debugDump() },
                       btn("Reset progress") { resetProgress() }
+                  ))
+                  floatBtn = btn("Float") { toggleFloat() }
+                  root.addView(row(
+                      btn("Lock") { lockScreen(false) },
+                      btn("Dim") { lockScreen(true) },
+                      floatBtn!!
                   ))
 
                   statusView = TextView(this)
@@ -579,7 +601,24 @@ jobs:
                   logScroll.addView(logView)
                   root.addView(logScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.2f))
 
-                  setContentView(root)
+                  val mp = ViewGroup.LayoutParams.MATCH_PARENT
+                  val wc = ViewGroup.LayoutParams.WRAP_CONTENT
+                  val frame = FrameLayout(this)
+                  frame.addView(root, FrameLayout.LayoutParams(mp, mp))
+                  lockLayer = FrameLayout(this)
+                  lockLayer.visibility = View.GONE
+                  lockLayer.isClickable = true
+                  lockLabel = TextView(this)
+                  lockLabel.setTextColor(Color.WHITE)
+                  lockLabel.textSize = 18f
+                  lockLayer.addView(lockLabel, FrameLayout.LayoutParams(wc, wc, Gravity.CENTER))
+                  unlockBtn = Button(this)
+                  unlockBtn.text = "Unlock"
+                  unlockBtn.isAllCaps = false
+                  unlockBtn.setOnClickListener { unlockScreen() }
+                  lockLayer.addView(unlockBtn, FrameLayout.LayoutParams(wc, wc, Gravity.TOP or Gravity.END))
+                  frame.addView(lockLayer, FrameLayout.LayoutParams(mp, mp))
+                  setContentView(frame)
                   wv.loadUrl(UPLOAD_URL)
                   log("1) Log in to Rumble in the browser above.\n2) Tap 'Select folder' and pick your videos folder.\n3) Tap 'Start'.\nBy using this app you confirm you own the videos and agree to Rumble's terms.")
 
@@ -593,8 +632,179 @@ jobs:
               override fun onDestroy() {
                   h.removeCallbacksAndMessages(null)
                   releaseWake()
+                  if (floating) { try { dock(false) } catch (e: Exception) { } }
                   wv.destroy()
                   super.onDestroy()
+              }
+
+              // ---------- lock / dim ----------
+              private fun resetBrightness() {
+                  val a = window.attributes
+                  a.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                  window.attributes = a
+              }
+
+              private fun lockScreen(dim: Boolean) {
+                  locked = true
+                  if (dim) {
+                      lockLayer.setBackgroundColor(Color.BLACK)
+                      lockLabel.text = ""
+                      unlockBtn.setTextColor(Color.parseColor("#777777"))
+                      unlockBtn.setBackgroundColor(Color.parseColor("#151515"))
+                      val a = window.attributes
+                      a.screenBrightness = 0.01f
+                      window.attributes = a
+                  } else {
+                      lockLayer.setBackgroundColor(Color.parseColor("#66000000"))
+                      lockLabel.text = "🔒 Locked"
+                      unlockBtn.setTextColor(Color.WHITE)
+                      unlockBtn.setBackgroundColor(Color.parseColor("#CC333333"))
+                      resetBrightness()
+                  }
+                  lockLayer.visibility = View.VISIBLE
+              }
+
+              private fun unlockScreen() {
+                  locked = false
+                  lockLayer.visibility = View.GONE
+                  resetBrightness()
+              }
+
+              override fun onBackPressed() {
+                  if (locked) return
+                  super.onBackPressed()
+              }
+
+              // ---------- floating window ----------
+              private fun toggleFloat() {
+                  if (floating) dock(false) else startFloat()
+              }
+
+              private fun makeShield(lp: WindowManager.LayoutParams, wm: WindowManager, box: View): View {
+                  val shield = View(this)
+                  var downX = 0f
+                  var downY = 0f
+                  var startX = 0
+                  var startY = 0
+                  var dragged = false
+                  shield.setOnTouchListener { _, ev ->
+                      when (ev.actionMasked) {
+                          MotionEvent.ACTION_DOWN -> {
+                              downX = ev.rawX
+                              downY = ev.rawY
+                              startX = lp.x
+                              startY = lp.y
+                              dragged = false
+                          }
+                          MotionEvent.ACTION_MOVE -> {
+                              val dx = ev.rawX - downX
+                              val dy = ev.rawY - downY
+                              if (!dragged && (Math.abs(dx) > dp(12) || Math.abs(dy) > dp(12))) dragged = true
+                              if (dragged) {
+                                  lp.x = startX + dx.toInt()
+                                  lp.y = startY + dy.toInt()
+                                  try { wm.updateViewLayout(box, lp) } catch (e: Exception) { }
+                              }
+                          }
+                          MotionEvent.ACTION_UP -> {
+                              if (!dragged) floatTap()
+                          }
+                      }
+                      true
+                  }
+                  return shield
+              }
+
+              private fun floatTap() {
+                  val now = SystemClock.elapsedRealtime()
+                  if (now - lastFloatTap > 700) floatTaps = 0
+                  lastFloatTap = now
+                  floatTaps++
+                  if (floatTaps >= 3) {
+                      floatTaps = 0
+                      h.post { dock(true) }
+                  }
+              }
+
+              private fun startFloat() {
+                  if (floating) return
+                  if (!android.provider.Settings.canDrawOverlays(this)) {
+                      log("Allow 'Display over other apps' for this app on the screen that just opened, then tap Float again.")
+                      try {
+                          startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                      } catch (e: Exception) { }
+                      return
+                  }
+                  val mp = ViewGroup.LayoutParams.MATCH_PARENT
+                  val wc = ViewGroup.LayoutParams.WRAP_CONTENT
+                  val dm = resources.displayMetrics
+                  val wm = applicationContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                  val idx = root.indexOfChild(wv)
+                  root.removeView(wv)
+                  val ph = TextView(this)
+                  ph.text = "Browser is floating over your other apps.\nTriple-tap the floating window, or press Dock, to bring it back."
+                  ph.setTextColor(Color.WHITE)
+                  ph.gravity = Gravity.CENTER
+                  root.addView(ph, if (idx < 0) root.childCount else idx, LinearLayout.LayoutParams(mp, 0, 4f))
+                  placeholder = ph
+
+                  val box = FrameLayout(this)
+                  box.setBackgroundColor(Color.parseColor("#9FE870"))
+                  box.setPadding(dp(2), dp(2), dp(2), dp(2))
+                  box.addView(wv, FrameLayout.LayoutParams(mp, mp))
+                  val tag = TextView(this)
+                  tag.text = "Rumble uploader - triple-tap to open"
+                  tag.textSize = 10f
+                  tag.setTextColor(Color.WHITE)
+                  tag.setBackgroundColor(Color.parseColor("#AA000000"))
+                  tag.setPadding(dp(6), dp(2), dp(6), dp(2))
+                  box.addView(tag, FrameLayout.LayoutParams(wc, wc, Gravity.BOTTOM or Gravity.START))
+
+                  val type = if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE
+                  val lp = WindowManager.LayoutParams(
+                      (dm.widthPixels * 0.72f).toInt(),
+                      (dm.heightPixels * 0.36f).toInt(),
+                      type,
+                      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                      PixelFormat.TRANSLUCENT
+                  )
+                  lp.gravity = Gravity.TOP or Gravity.START
+                  lp.x = dm.widthPixels - lp.width - dp(8)
+                  lp.y = dp(120)
+                  box.addView(makeShield(lp, wm, box), FrameLayout.LayoutParams(mp, mp))
+                  wm.addView(box, lp)
+                  floatBox = box
+                  floating = true
+                  floatBtn?.text = "Dock"
+                  log("Floating. Triple-tap the floating window to open the app. Drag it to move it.")
+                  h.postDelayed({ moveTaskToBack(true) }, 400)
+              }
+
+              private fun dock(openApp: Boolean) {
+                  if (!floating) return
+                  if (openApp) {
+                      try {
+                          val i = Intent(this, MainActivity::class.java)
+                          i.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NEW_TASK)
+                          startActivity(i)
+                      } catch (e: Exception) { }
+                  }
+                  val box = floatBox
+                  val wm = applicationContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                  try { if (box != null) wm.removeView(box) } catch (e: Exception) { }
+                  try { box?.removeView(wv) } catch (e: Exception) { }
+                  var idx = root.childCount
+                  val ph = placeholder
+                  if (ph != null) {
+                      idx = root.indexOfChild(ph)
+                      root.removeView(ph)
+                  }
+                  if (idx < 0) idx = root.childCount
+                  if (wv.parent == null) root.addView(wv, idx, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 4f))
+                  floatBox = null
+                  placeholder = null
+                  floating = false
+                  floatBtn?.text = "Float"
               }
 
               // ---------- folder ----------
@@ -637,39 +847,7 @@ jobs:
                   var res = 0
                   var i = 0
                   while (res == 0 && i < minOf(x.size, y.size)) {
-                      val p = x[i]
-                      val q = y[i]
-                      res = if (p[0].isDigit() && q[0].isDigit()) p.toBigInteger().compareTo(q.toBigInteger()) else p.compareTo(q)
-                      i++
-                  }
-                  if (res != 0) res else x.size - y.size
-              }
-
-              private fun loadVideos(tree: Uri) {
-                  val treeId = DocumentsContract.getTreeDocumentId(tree)
-                  val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, treeId)
-                  val list = ArrayList<Vid>()
-                  val ext = Regex(".*\\.(mp4|mov|mkv|avi|webm|m4v|3gp|flv|wmv|mpg|mpeg)")
-                  val cur = contentResolver.query(
-                      children,
-                      arrayOf(
-                          DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                          DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                          DocumentsContract.Document.COLUMN_MIME_TYPE
-                      ), null, null, null
-                  )
-                  cur?.use {
-                      while (it.moveToNext()) {
-                          val id = it.getString(0)
-                          val name = it.getString(1) ?: continue
-                          val mime = it.getString(2) ?: ""
-                          if (mime.startsWith("video/") || name.lowercase().matches(ext)) {
-                              list.add(Vid(id, name, DocumentsContract.buildDocumentUriUsingTree(tree, id)))
-                          }
-                      }
-                  }
-                  queue = list.sortedWith(natCmp)
-                  failed.clear()
+                                        failed.clear()
                   log("Folder loaded: ${queue.size} video(s).")
               }
 
@@ -1062,51 +1240,4 @@ jobs:
               override fun onCreate() {
                   super.onCreate()
                   val chId = "rbu_channel"
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                      val nm = getSystemService(NotificationManager::class.java)
-                      val ch = NotificationChannel(chId, "Rumble Uploader", NotificationManager.IMPORTANCE_LOW)
-                      nm.createNotificationChannel(ch)
-                  }
-                  val notif: Notification =
-                      (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(this, chId) else Notification.Builder(this))
-                          .setContentTitle("Rumble Uploader")
-                          .setContentText("Uploading videos in the background…")
-                          .setSmallIcon(android.R.drawable.stat_sys_upload)
-                          .setOngoing(true)
-                          .build()
-                  try {
-                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                          startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-                      } else {
-                          startForeground(1, notif)
-                      }
-                  } catch (e: Exception) { }
-                  try {
-                      val pm = getSystemService(POWER_SERVICE) as PowerManager
-                      wake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "rbu:service")
-                      wake?.acquire(12 * 60 * 60 * 1000L)
-                  } catch (e: Exception) { }
-              }
-
-              override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
-
-              override fun onDestroy() {
-                  try { if (wake?.isHeld == true) wake?.release() } catch (e: Exception) { }
-                  super.onDestroy()
-              }
-          }
-          RBU_EOF
-      - name: Build APK
-        run: gradle assembleDebug --no-daemon
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: RumbleUploader-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          name: Latest APK
-          files: app/build/outputs/apk/debug/app-debug.apk
-
+           
