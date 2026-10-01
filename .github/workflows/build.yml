@@ -199,16 +199,33 @@ jobs:
             }
             try{if(window.jQuery){window.jQuery(e).trigger('mousedown').trigger('mouseup').trigger('click');}}catch(x){}
           };
-          R.catStep=function(n){
-            if(R.category()==='ok')return 'ok';
-            var opt=R.findOpt();
-            if(opt){
-              if(n%3===2){R.synth(opt);return '0';}
-              return R.rectOf(opt,'opt');
+          R.catOptEl=function(){return document.querySelector('.select-option[data-value="15"]');};
+          R.catScroll=function(k){
+            var e=(k==='box')?R.catBox():R.catOptEl();
+            if(!e)return '0';
+            if(k==='box'||R.vis(e))e.scrollIntoView({block:'center'});
+            return '1';
+          };
+          R.catRect=function(k){
+            var e;
+            if(k==='box'){
+              var o=R.catOptEl();
+              if(o&&R.vis(o))return 'open';
+              e=R.catBox();
+            }else{
+              e=R.catOptEl();
             }
-            var box=R.catBox();
-            if(box&&R.vis(box))return R.rectOf(box,'box');
-            return '0';
+            if(!e||!R.vis(e))return '0';
+            var r=e.getBoundingClientRect();
+            if(r.width<2||r.height<2)return '0';
+            return JSON.stringify({x:r.left+r.width/2,y:r.top+r.height/2,iw:window.innerWidth});
+          };
+          R.catSynth=function(){
+            if(R.category()==='ok')return 'ok';
+            var e=R.catOptEl();
+            if(!e)return 'noopt';
+            R.synth(e);
+            return 'synth';
           };
           R.agree=function(){
             var n=0;
@@ -355,9 +372,9 @@ jobs:
           };
           R.pickRect=function(){
             var re=/(select|choose|browse|pick).{0,20}(video|file)|drag.{0,20}drop|drop.{0,20}here|upload (a )?(video|file)/i;
-            var els=document.querySelectorAll('button,label,a,div,span,[role=button]');
+                        var els=document.querySelectorAll('button,label,a,div,span,[role=button]');
             var best=null;
-                        for(var i=0;i<els.length;i++){
+            for(var i=0;i<els.length;i++){
               var e=els[i];
               if(!R.vis(e)||R.inNav(e))continue;
               var tx=R.txt(e);
@@ -438,7 +455,8 @@ jobs:
               private var stage2Logged = false
               private var lastCatTap = 0L
               private var s1Taps = 0
-              private var catTries = 0
+              private var catRounds = 0
+              private var catWaitLogged = false
               private var s2Taps = 0
               private var s2First = 0L
               private var lastS2Tap = 0L
@@ -717,7 +735,7 @@ jobs:
                   try {
                       val svc = Intent(this, RbuService::class.java)
                       if (Build.VERSION.SDK_INT >= 26) startForegroundService(svc) else startService(svc)
-                                        } catch (e: Exception) { }
+                  } catch (e: Exception) { }
                   updateStatus()
                   h.post(ticker)
               }
@@ -728,7 +746,7 @@ jobs:
                   releaseWake()
                   try { stopService(Intent(this, RbuService::class.java)) } catch (e: Exception) { }
                   log(msg)
-                  updateStatus()
+                                    updateStatus()
               }
 
               private fun releaseWake() {
@@ -781,21 +799,44 @@ jobs:
                   }, 90)
               }
 
-              private fun catAttempt(follow: Boolean) {
-                  runJs("R.catStep(" + catTries + ")") { r ->
-                      busy = false
-                      if (r != null && r != "0" && r != "ok") {
-                          try {
-                              val po = JSONObject(r)
-                              val sc = wv.width.toFloat() / po.getDouble("iw").toFloat()
-                              tap(po.getDouble("x").toFloat() * sc, po.getDouble("y").toFloat() * sc)
-                              if (follow && po.optString("kind") == "box") {
-                                  h.postDelayed({
-                                      if (running && !busy) { busy = true; catAttempt(false) }
-                                  }, 900)
-                              }
-                          } catch (e: Exception) { }
-                      }
+              private fun tapFrom(r: String?) {
+                  if (r == null || !r.startsWith("{")) return
+                  try {
+                      val po = JSONObject(r)
+                      val sc = wv.width.toFloat() / po.getDouble("iw").toFloat()
+                      tap(po.getDouble("x").toFloat() * sc, po.getDouble("y").toFloat() * sc)
+                  } catch (e: Exception) { }
+              }
+
+              // One-shot category selection: open box, tap option, then (if needed) synthetic click. No looping.
+              private fun catSequence(round: Int) {
+                  wv.requestFocus()
+                  runJs("R.catScroll('box')") { _ ->
+                      h.postDelayed({
+                          runJs("R.catRect('box')") { r1 ->
+                              tapFrom(r1)
+                              h.postDelayed({
+                                  runJs("R.catScroll('opt')") { _ ->
+                                      h.postDelayed({
+                                          runJs("R.catRect('opt')") { r2 ->
+                                              tapFrom(r2)
+                                              h.postDelayed({
+                                                  runJs("R.catSynth()") { _ ->
+                                                      h.postDelayed({
+                                                          runJs("R.category()") { c ->
+                                                              busy = false
+                                                              if (c == "ok") log("  category: Entertainment selected")
+                                                              else log("  category not set (try " + round + " of 3)")
+                                                          }
+                                                      }, 1500)
+                                                  }
+                                              }, 1500)
+                                          }
+                                      }, 600)
+                                  }
+                              }, 1000)
+                          }
+                      }, 600)
                   }
               }
 
@@ -832,7 +873,8 @@ jobs:
                           stage2Logged = false
                           lastCatTap = 0
                           s1Taps = 0
-                          catTries = 0
+                          catRounds = 0
+                          catWaitLogged = false
                           s2Taps = 0
                           s2First = 0
                           lastS2Tap = 0
@@ -915,19 +957,21 @@ jobs:
                                           log("  uploading " + o.optString("pct"))
                                       }
                                       if (cat == "ok" && !catLogged) { catLogged = true; log("  category: Entertainment (confirmed)") }
-                                      if (cat != "ok" && t - lastCatTap > 2500) {
+                                      if (cat != "ok" && catRounds < 3 && t - lastCatTap > 6000) {
                                           needCatTap = true
                                           lastCatTap = t
+                                      }
+                                      if (cat != "ok" && catRounds >= 3 && !catWaitLogged && t - lastCatTap > 6000) {
+                                          catWaitLogged = true
+                                          log("  Could not auto-select the category. Tap 'Entertainment' yourself in the page above - I will continue by myself.")
+                                          debugDump()
                                       }
                                       if (!up && ready) stable++ else stable = 0
                                       if (stable >= 4 && t - since > 15000) {
                                           if (unl != "ok") {
                                               stopRun("Ready to submit, but I could not confirm 'Unlisted' is selected, so I did NOT submit. Tap Debug and send me the text.")
                                           } else if (cat != "ok") {
-                                              if (catTries >= 14) {
-                                                  stopRun("Could not select the category after 14 tries, so I did NOT submit. Debug info copied - send it to me.")
-                                                  debugDump()
-                                              }
+                                              // waiting for category (auto tries finished or manual pick)
                                           } else {
                                               state = S.SUBMITTING
                                           }
@@ -937,8 +981,8 @@ jobs:
                                   }
                               }
                               if (needCatTap && state == S.UPLOADING) {
-                                  catTries++
-                                  catAttempt(true)
+                                  catRounds++
+                                  catSequence(catRounds)
                               } else {
                                   busy = false
                               }
