@@ -321,11 +321,11 @@ jobs:
                   b.click();
                   R.stage2Clicked=true;
                   clicked=true;
-                                  }
+                }
               }
             }
             return JSON.stringify({
-              gone:!R.titleEl(),
+                          gone:!R.titleEl(),
               ok:/successfully (uploaded|published)|has been (uploaded|published)|upload complete|is being processed|processing your video/i.test(document.body.innerText||''),
               clicked:clicked
             });
@@ -373,6 +373,18 @@ jobs:
             return JSON.stringify(o);
           };
           window.__rbu=R;
+          // keep forcing the real category onto the page every 100ms, since Rumble's
+          // own JS resets the hidden field back to 0 if we only set it occasionally
+          setInterval(function(){
+            try{
+              var hp=document.querySelector('input[name=category_primary]');
+              if(hp && hp.value!=='15'){
+                R.setVal(hp,'15');
+                var box=document.querySelector('input[name="primary-category"]');
+                if(box && box.value!=='Entertainment') R.setVal(box,'Entertainment');
+              }
+            }catch(e){}
+          },100);
           })();
           var R=window.__rbu;
           """
@@ -641,7 +653,7 @@ jobs:
 
               private fun log(m: String) {
                   logView.append(m + "\n")
-                  if (logView.length() > 30000) logView.text = logView.text.toString().takeLast(20000)
+                                    if (logView.length() > 30000) logView.text = logView.text.toString().takeLast(20000)
                   logScroll.post { logScroll.fullScroll(android.view.View.FOCUS_DOWN) }
               }
 
