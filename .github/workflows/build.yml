@@ -164,6 +164,26 @@ jobs:
           };
           R.hasTitle=function(){return R.titleEl()?'1':'0';};
           R.categoryOpened=false;
+          R.categoryNeedTap=function(){
+            var hp=document.querySelector('input[name=category_primary]');
+            if(!hp || hp.value==='15') return '0';
+            var cands=document.querySelectorAll('li,div,span,a,[role=option],[role=listitem],button,label,td');
+            for(var i=0;i<cands.length;i++){
+              var e=cands[i];
+              if(!R.vis(e)||R.inNav(e))continue;
+              var t=R.txt(e);
+              if(t.length<40 && /^entertainment$/i.test(t)){
+                var r=e.getBoundingClientRect();
+                if(r.width>1&&r.height>1) return JSON.stringify({x:r.left+r.width/2,y:r.top+r.height/2,iw:window.innerWidth});
+              }
+            }
+            var box=document.querySelector('input[name="primary-category"]');
+            if(box && R.vis(box)){
+              var r2=box.getBoundingClientRect();
+              if(r2.width>1&&r2.height>1) return JSON.stringify({x:r2.left+r2.width/2,y:r2.top+r2.height/2,iw:window.innerWidth});
+            }
+            return '0';
+          };
           R.category=function(){
             var ID='15'; // Rumble's real numeric ID for "Entertainment"
             var hp=document.querySelector('input[name=category_primary]');
@@ -320,14 +340,14 @@ jobs:
             if(!R.stage2Clicked && !justPickedLicense){
               var b=R.submitBtn();
               if(b){
-                var label=R.txt(b).toLowerCase();
+                              var label=R.txt(b).toLowerCase();
                 if(label!=='back' && !b.disabled && !b.classList.contains('disabled')){
                   b.click();
                   R.stage2Clicked=true;
                   clicked=true;
                 }
               }
-                          }
+            }
             return JSON.stringify({
               gone:!R.titleEl(),
               ok:/successfully (uploaded|published)|has been (uploaded|published)|upload complete|is being processed|processing your video/i.test(document.body.innerText||''),
@@ -417,6 +437,7 @@ jobs:
               private var stable = 0
               private var catLogged = false
               private var stage2Logged = false
+              private var lastCatTap = 0L
               private var pageLoaded = false
               private var chooserServed = false
               private var pendingUri: Uri? = null
@@ -656,7 +677,7 @@ jobs:
               }
 
               private fun log(m: String) {
-                                logView.append(m + "\n")
+                  logView.append(m + "\n")
                   if (logView.length() > 30000) logView.text = logView.text.toString().takeLast(20000)
                   logScroll.post { logScroll.fullScroll(android.view.View.FOCUS_DOWN) }
               }
@@ -786,6 +807,7 @@ jobs:
                           lastTap = 0
                           catLogged = false
                           stage2Logged = false
+                          lastCatTap = 0
                           wv.loadUrl(UPLOAD_URL)
                           state = S.LOADING
                           since = now
@@ -843,9 +865,9 @@ jobs:
                           busy = true
                           val title = cleanTitle(v!!.name.substringBeforeLast('.'))
                           runJs("R.tickForm(" + JSONObject.quote(title) + ")") { r ->
-                              busy = false
                               val t = SystemClock.elapsedRealtime()
                               val o = try { JSONObject(r ?: "{}") } catch (e: Exception) { JSONObject() }
+                              var needCatTap = false
                               if (!o.optBoolean("title")) {
                                   stable = 0
                                   if (t - lastTitleSeen > 120000) fail("Details form disappeared")
@@ -864,6 +886,10 @@ jobs:
                                           log("  uploading " + o.optString("pct"))
                                       }
                                       if (cat == "ok" && !catLogged) { catLogged = true; log("  category: Entertainment (confirmed)") }
+                                      if (cat != "ok" && t - lastCatTap > 2500) {
+                                          needCatTap = true
+                                          lastCatTap = t
+                                      }
                                       if (!up && ready) stable++ else stable = 0
                                       if (stable >= 4 && t - since > 15000) {
                                           if (unl != "ok") {
@@ -876,6 +902,20 @@ jobs:
                                           fail("Upload took too long")
                                       }
                                   }
+                              }
+                              if (needCatTap && state == S.UPLOADING) {
+                                  runJs("R.categoryNeedTap()") { r2 ->
+                                      busy = false
+                                      if (r2 != null && r2 != "0") {
+                                          try {
+                                              val po = JSONObject(r2)
+                                              val sc = wv.width.toFloat() / po.getDouble("iw").toFloat()
+                                              tap(po.getDouble("x").toFloat() * sc, po.getDouble("y").toFloat() * sc)
+                                          } catch (e: Exception) { }
+                                      }
+                                  }
+                              } else {
+                                  busy = false
                               }
                           }
                       }
