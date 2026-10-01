@@ -296,16 +296,20 @@ jobs:
           R.licensePicked=false;
           R.pickLicense=function(){
             if(R.licensePicked) return false;
-            var els=document.querySelectorAll('div,label,li,span,button,[role=button],[role=radio]');
+            var els=document.querySelectorAll('div,label,li,span,button,[role=button],[role=radio],a');
+            var best=null;
             for(var i=0;i<els.length;i++){
               var e=els[i];
               if(!R.vis(e)||R.inNav(e))continue;
               var t=R.txt(e);
-              if(t.length<80 && /^personal use\b/i.test(t)){
-                e.click();
-                R.licensePicked=true;
-                return true; // just clicked - let the page settle before trying to submit
+              if(/^personal use\b/i.test(t)){
+                if(!best || t.length<R.txt(best).length) best=e;
               }
+            }
+            if(best){
+              best.click();
+              R.licensePicked=true;
+              return true; // just clicked - let the page settle before trying to submit
             }
             return false;
           };
@@ -323,9 +327,9 @@ jobs:
                   clicked=true;
                 }
               }
-            }
+                          }
             return JSON.stringify({
-                          gone:!R.titleEl(),
+              gone:!R.titleEl(),
               ok:/successfully (uploaded|published)|has been (uploaded|published)|upload complete|is being processed|processing your video/i.test(document.body.innerText||''),
               clicked:clicked
             });
@@ -652,8 +656,8 @@ jobs:
               }
 
               private fun log(m: String) {
-                  logView.append(m + "\n")
-                                    if (logView.length() > 30000) logView.text = logView.text.toString().takeLast(20000)
+                                logView.append(m + "\n")
+                  if (logView.length() > 30000) logView.text = logView.text.toString().takeLast(20000)
                   logScroll.post { logScroll.fullScroll(android.view.View.FOCUS_DOWN) }
               }
 
