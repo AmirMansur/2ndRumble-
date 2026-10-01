@@ -168,7 +168,10 @@ jobs:
             var hp=document.querySelector('input[name=category_primary]');
             var box=R.catBox();
             if(!hp)return 'none';
-            if(hp.value==='15'&&box&&/entertainment/i.test(box.value))return 'ok';
+            if(hp.value==='15'){
+            try{ if(box&&document.activeElement===box)box.blur(); }catch(e){}
+            return 'ok';
+          }
             return 'none';
           };
           R.findOpt=function(){
@@ -354,9 +357,9 @@ jobs:
             var re=/(select|choose|browse|pick).{0,20}(video|file)|drag.{0,20}drop|drop.{0,20}here|upload (a )?(video|file)/i;
             var els=document.querySelectorAll('button,label,a,div,span,[role=button]');
             var best=null;
-            for(var i=0;i<els.length;i++){
+                        for(var i=0;i<els.length;i++){
               var e=els[i];
-                            if(!R.vis(e)||R.inNav(e))continue;
+              if(!R.vis(e)||R.inNav(e))continue;
               var tx=R.txt(e);
               if(tx.length>0&&tx.length<70&&re.test(tx)){
                 if(!best||tx.length<R.txt(best).length)best=e;
@@ -714,8 +717,8 @@ jobs:
                   try {
                       val svc = Intent(this, RbuService::class.java)
                       if (Build.VERSION.SDK_INT >= 26) startForegroundService(svc) else startService(svc)
-                  } catch (e: Exception) { }
-                                    updateStatus()
+                                        } catch (e: Exception) { }
+                  updateStatus()
                   h.post(ticker)
               }
 
