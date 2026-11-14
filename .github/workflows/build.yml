@@ -212,6 +212,58 @@ jobs:
           R.vis=function(e){return !!e&&(e.offsetWidth>0||e.offsetHeight>0||e.getClientRects().length>0);};
           R.txt=function(e){return ((e.innerText||e.value||e.textContent||'')+'').replace(/\s+/g,' ').trim();};
           R.inNav=function(e){return !!e.closest('header,nav,[role=navigation],footer');};
+          // Rumble's floating "Help" button sits in the bottom-right corner and steals taps. Hide it.
+          R.killHelp=function(){
+            try{
+              var W=window.innerWidth,H=window.innerHeight,n=0;
+              var pts=[[W-50,H-45],[W-120,H-45],[W-50,H-90],[W-90,H-70]];
+              for(var p=0;p<pts.length;p++){
+                var st=document.elementsFromPoint(pts[p][0],pts[p][1])||[];
+                for(var i=0;i<st.length;i++){
+                  var f=null;
+                  for(var a=st[i];a&&a!==document.body&&a!==document.documentElement;a=a.parentElement){
+                    if(getComputedStyle(a).position==='fixed')f=a;
+                  }
+                  if(f&&f.tagName!=='HEADER'&&!f.closest('header,nav')){
+                    f.style.setProperty('display','none','important');
+                    n++;
+                  }
+                }
+              }
+              return n;
+            }catch(x){return -1;}
+          };
+          // true when something fixed on screen (like a help bubble) covers the point instead of the wanted element
+          R.blocked=function(e,x,y){
+            try{
+              var t=document.elementFromPoint(x,y);
+              if(!t)return false;
+              if(t===e||e.contains(t)||t.contains(e))return false;
+              if(t.tagName==='IFRAME')return true;
+              for(var n=t;n&&n!==document.body;n=n.parentElement){
+                if(getComputedStyle(n).position==='fixed')return true;
+              }
+              return false;
+            }catch(z){return false;}
+          };
+          // scroll the element to the middle at once (no smooth scrolling), then return a tap point
+          // only if that point really reaches the element
+          R.safe=function(e,extra){
+            R.killHelp();
+            e.scrollIntoView({block:'center',behavior:'instant'});
+            var r=e.getBoundingClientRect();
+            if(r.width<2||r.height<2)return null;
+            var x=r.left+r.width/2,y=r.top+r.height/2;
+            if(R.blocked(e,x,y)){
+              R.killHelp();
+              r=e.getBoundingClientRect();
+              x=r.left+r.width/2;y=r.top+r.height/2;
+              if(R.blocked(e,x,y))return null;
+            }
+            var o={x:x,y:y,iw:window.innerWidth};
+            if(extra){for(var k in extra)o[k]=extra[k];}
+            return o;
+          };
           R.setVal=function(el,v){
             var p=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
             Object.getOwnPropertyDescriptor(p,'value').set.call(el,v);
@@ -242,16 +294,14 @@ jobs:
               var e=cands[i];
               if(!R.vis(e)||R.inNav(e))continue;
               if(/^entertainment$/i.test(R.txt(e))){
-                if(!best||e.innerHTML.length<best.innerHTML.length)best=e;
+                              if(!best||e.innerHTML.length<best.innerHTML.length)best=e;
               }
             }
             return best;
           };
           R.rectOf=function(e,kind){
-            e.scrollIntoView({block:'center'});
-            var r=e.getBoundingClientRect();
-            if(r.width<2||r.height<2)return '0';
-            return JSON.stringify({x:r.left+r.width/2,y:r.top+r.height/2,iw:window.innerWidth,kind:kind});
+            var o=R.safe(e,{kind:kind});
+            return o?JSON.stringify(o):'0';
           };
           R.synth=function(e){
             var ms=['pointerdown','mousedown','pointerup','mouseup','click'];
@@ -264,7 +314,7 @@ jobs:
           R.catScroll=function(k){
             var e=(k==='box')?R.catBox():R.catOptEl();
             if(!e)return '0';
-            if(k==='box'||R.vis(e))e.scrollIntoView({block:'center'});
+            if(k==='box'||R.vis(e))e.scrollIntoView({block:'center',behavior:'instant'});
             return '1';
           };
           R.catRect=function(k){
@@ -277,9 +327,8 @@ jobs:
               e=R.catOptEl();
             }
             if(!e||!R.vis(e))return '0';
-            var r=e.getBoundingClientRect();
-            if(r.width<2||r.height<2)return '0';
-            return JSON.stringify({x:r.left+r.width/2,y:r.top+r.height/2,iw:window.innerWidth});
+            var o=R.safe(e,null);
+            return o?JSON.stringify(o):'0';
           };
           R.catSynth=function(){
             var e=R.catOptEl();
@@ -287,7 +336,7 @@ jobs:
             R.synth(e);
             return 'synth';
           };
-                    R.agree=function(){
+          R.agree=function(){
             var n=0;
             var c=document.querySelectorAll('input[type=checkbox]');
             for(var i=0;i<c.length;i++){
@@ -378,10 +427,8 @@ jobs:
           R.submitRect=function(){
             var b=R.submitBtn();
             if(!b||b.disabled||b.getAttribute('aria-disabled')==='true'||b.classList.contains('disabled'))return '0';
-            b.scrollIntoView({block:'center'});
-            var r=b.getBoundingClientRect();
-            if(r.width<2||r.height<2)return '0';
-            return JSON.stringify({x:r.left+r.width/2,y:r.top+r.height/2,iw:window.innerWidth,txt:R.txt(b).slice(0,20)});
+            var o=R.safe(b,{txt:R.txt(b).slice(0,20)});
+            return o?JSON.stringify(o):'0';
           };
           R.stage2Clicked=false;
           R.licensePicked=false;
@@ -425,9 +472,8 @@ jobs:
             o.lic=R.pickLicense();
             R.agree();
             o.disabled=!!(b.disabled||b.getAttribute('aria-disabled')==='true'||b.classList.contains('disabled'));
-            b.scrollIntoView({block:'center'});
-            var r=b.getBoundingClientRect();
-            if(r.width>1&&r.height>1){o.x=r.left+r.width/2;o.y=r.top+r.height/2;o.iw=window.innerWidth;}
+            var o2=R.safe(b,null);
+            if(o2){o.x=o2.x;o.y=o2.y;o.iw=o2.iw;}
             return JSON.stringify(o);
           };
           R.pickRect=function(){
@@ -451,10 +497,8 @@ jobs:
               }
             }
             if(!t)return '0';
-            t.scrollIntoView({block:'center'});
-            var r=t.getBoundingClientRect();
-            if(r.width<2||r.height<2)return '0';
-            return JSON.stringify({x:r.left+r.width/2,y:r.top+r.height/2,iw:window.innerWidth,txt:R.txt(t).slice(0,30)});
+            var o=R.safe(t,{txt:R.txt(t).slice(0,30)});
+            return o?JSON.stringify(o):'0';
           };
           R.dump=function(){
             var o={url:location.href,title:document.title};
@@ -485,6 +529,7 @@ jobs:
             return JSON.stringify(o);
           };
           window.__rbu=R;
+          setInterval(function(){try{R.killHelp();}catch(x){}},700);
           })();
           var R=window.__rbu;
           """
@@ -545,7 +590,7 @@ jobs:
               private val lock = Any()
               @Volatile private var extractDone = true
               @Volatile private var extractErr: String? = null
-              @Volatile private var extractFile: java.io.File? = null
+                            @Volatile private var extractFile: java.io.File? = null
               @Volatile private var extractGen = 0
               private val videoExt = Regex(".*\\.(mp4|mov|mkv|avi|webm|m4v|3gp|flv|wmv|mpg|mpeg)")
 
@@ -576,7 +621,7 @@ jobs:
                       val r = LinearLayout(this)
                       r.orientation = LinearLayout.HORIZONTAL
                       for (b in bs) r.addView(b, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                                            return r
+                      return r
                   }
                   root.addView(row(
                       btn("Select folder") { pickFolder() },
@@ -865,12 +910,13 @@ jobs:
                   placeholder = ph
 
                   // Bubble is tiny (like a screen-recorder pill), but the real WebView inside it
-                                    // is kept at a normal working size and just visually scaled down to fit -
+                  // is kept at a normal working size and just visually scaled down to fit -
                   // Android still treats it as a fully live, attached, non-zero-size view.
                   val bubbleDp = 52
                   val bubblePx = dp(bubbleDp)
                   val innerDp = 360
                   val innerPx = dp(innerDp)
+                  val innerH = dp(640)
                   val scale = bubblePx.toFloat() / innerPx.toFloat()
 
                   val box = FrameLayout(this)
@@ -881,7 +927,7 @@ jobs:
                       setColor(Color.parseColor("#9FE870"))
                       setStroke(dp(2), Color.parseColor("#1b5e20"))
                   }
-                  box.addView(wv, FrameLayout.LayoutParams(innerPx, innerPx))
+                  box.addView(wv, FrameLayout.LayoutParams(innerPx, innerH))
                   wv.pivotX = 0f
                   wv.pivotY = 0f
                   wv.scaleX = scale
@@ -1136,7 +1182,7 @@ jobs:
                                   while (e != null) {
                                       if (e.name == want) {
                                           java.io.FileOutputStream(o).use { fo -> zis.copyTo(fo, 1 shl 16) }
-                                          found = true
+                                                                                    found = true
                                           break
                                       }
                                       e = zis.nextEntry
@@ -1154,7 +1200,7 @@ jobs:
                                   try { out?.delete() } catch (e: Exception) { }
                                   try { dir?.delete() } catch (e: Exception) { }
                               }
-                                                            extractDone = true
+                              extractDone = true
                           } else {
                               try { out?.delete() } catch (e: Exception) { }
                               try { dir?.delete() } catch (e: Exception) { }
@@ -1432,7 +1478,7 @@ jobs:
                       wake?.acquire(12 * 60 * 60 * 1000L)
                   } catch (e: Exception) { }
                   try {
-                      val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                                        val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
                       val mode = if (Build.VERSION.SDK_INT >= 29) WifiManager.WIFI_MODE_FULL_LOW_LATENCY else WifiManager.WIFI_MODE_FULL_HIGH_PERF
                       val wl = wm.createWifiLock(mode, "rbu:wifi")
                       wl.setReferenceCounted(false)
@@ -1443,7 +1489,7 @@ jobs:
                       val svc = Intent(this, RbuService::class.java)
                       if (Build.VERSION.SDK_INT >= 26) startForegroundService(svc) else startService(svc)
                   } catch (e: Exception) { }
-                                    if (!auto && !canOverlay()) log("Tip: tap Float once and allow 'Display over other apps', so the uploader keeps a small bubble while you use other apps.")
+                  if (!auto && !canOverlay()) log("Tip: tap Float once and allow 'Display over other apps', so the uploader keeps a small bubble while you use other apps.")
                   updateStatus()
                   h.post(ticker)
               }
@@ -1728,11 +1774,11 @@ jobs:
                               }
                           }
                       }
-                      S.CONFIRMING -> {
+                                            S.CONFIRMING -> {
                           busy = true
                           runJs("R.s2()") { r ->
                               busy = false
-                                                            val t = SystemClock.elapsedRealtime()
+                              val t = SystemClock.elapsedRealtime()
                               val o = try { JSONObject(r ?: "{}") } catch (e: Exception) { JSONObject() }
                               val curUrl = wv.url ?: ""
                               val left = !curUrl.contains("upload", true)
